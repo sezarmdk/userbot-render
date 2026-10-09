@@ -5,13 +5,6 @@ from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateStatusRequest
-from telethon.tl.types import (
-    SendMessageTypingAction,
-    SendMessageRecordAudioAction,
-    SendMessageUploadPhotoAction,
-    SendMessageUploadDocumentAction,
-    SendMessageRecordRoundAction
-)
 
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
@@ -21,26 +14,14 @@ client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
 START_TIME = time.time()
 
-# Sozlamalar holati
 CONFIG = {
     "online": True,
     "read": True,
 }
 
-# Qaysi chatlarda status animatsiyasi yoqilganligi
 target_actions = set()
+ACTION_TYPES = ["typing", "record-audio", "record-round", "photo", "document"]
 
-ACTIONS = [
-    SendMessageTypingAction(),
-    SendMessageRecordAudioAction(),
-    SendMessageRecordRoundAction(),
-    SendMessageUploadPhotoAction(),
-    SendMessageUploadDocumentAction()
-]
-
-ACTION_NAMES = ["yozmoqda...", "ovoz yozmoqda...", "video xabar...", "rasm yuklamoqda...", "fayl yuklamoqda..."]
-
-# 1. AUTO-READ
 @client.on(events.NewMessage(incoming=True))
 async def auto_read_handler(event):
     if CONFIG["read"] and event.is_private:
@@ -49,7 +30,6 @@ async def auto_read_handler(event):
         except Exception:
             pass
 
-# 2. 24/7 ONLINE LOOP
 async def keep_online_loop():
     while True:
         if CONFIG["online"]:
@@ -59,27 +39,25 @@ async def keep_online_loop():
                 pass
         await asyncio.sleep(25)
 
-# 3. CHAT ACTIONS LOOP
 async def action_loop():
     idx = 0
     while True:
         if target_actions:
-            cur_act = ACTIONS[idx % len(ACTIONS)]
+            cur_act = ACTION_TYPES[idx % len(ACTION_TYPES)]
             for cid in list(target_actions):
                 try:
-                    await client.send_chat_action(cid, cur_act)
+                    async with client.action(cid, cur_act):
+                        await asyncio.sleep(1)
                 except Exception:
                     pass
             idx += 1
-        await asyncio.sleep(3.5)
+        await asyncio.sleep(3)
 
-# 4. BUYRUQLAR (FAQAT O'ZINGIZ UCHUN)
 @client.on(events.NewMessage(outgoing=True))
 async def commands_handler(event):
     text = (event.raw_text or "").strip()
     cid = event.chat_id
 
-    # .ping
     if text == ".ping":
         t0 = time.time()
         msg = await event.edit("<code>Ping tekshirilmoqda...</code>")
@@ -87,7 +65,6 @@ async def commands_handler(event):
         await msg.edit(f"<b>PING:</b> <code>{diff} ms</code>", parse_mode="html")
         return
 
-    # .on / .off
     if text == ".on":
         CONFIG["online"] = True
         try:
@@ -106,7 +83,6 @@ async def commands_handler(event):
         await event.edit("<b>AUTO-ONLINE:</b> <code>OCHIRILDI [OFF]</code>", parse_mode="html")
         return
 
-    # .read / .unread
     if text == ".read":
         CONFIG["read"] = True
         await event.edit("<b>AUTO-READ:</b> <code>YOQILDI [ON]</code>", parse_mode="html")
@@ -117,10 +93,9 @@ async def commands_handler(event):
         await event.edit("<b>AUTO-READ:</b> <code>OCHIRILDI [OFF]</code>", parse_mode="html")
         return
 
-    # .typ / .untyp (Joriy chatda animatsiyani yoqish/o'chirish)
     if text == ".typ":
         target_actions.add(cid)
-        await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>YOQILDI</code>\n<i>(Typing, audio, video, rasm, fayl...)</i>", parse_mode="html")
+        await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>YOQILDI</code>\n<i>(Yozmoqda, audio, video, rasm, fayl...)</i>", parse_mode="html")
         return
 
     if text == ".untyp":
@@ -128,7 +103,6 @@ async def commands_handler(event):
         await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>OCHIRILDI</code>", parse_mode="html")
         return
 
-    # .info (Chiroyli jadval va uptime)
     if text == ".info":
         uptime_sec = int(time.time() - START_TIME)
         hours = uptime_sec // 3600
@@ -154,7 +128,6 @@ async def commands_handler(event):
         await event.edit(table_text, parse_mode="html")
         return
 
-# 5. RENDER WEB SERVER
 async def start_web_server():
     app = web.Application()
     async def ping_handler(request):
