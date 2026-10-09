@@ -5,6 +5,13 @@ from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateStatusRequest
+from telethon.tl.types import (
+    SendMessageTypingAction,
+    SendMessageRecordAudioAction,
+    SendMessageRecordRoundAction,
+    SendMessageUploadPhotoAction,
+    SendMessageUploadDocumentAction
+)
 
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
@@ -19,9 +26,15 @@ CONFIG = {
     "read": True,
 }
 
-# Har bir chat uchun alohida fon sikli (task) saqlash
 active_tasks = {}
-ACTION_TYPES = ["typing", "record-audio", "record-round", "photo", "document"]
+
+ACTIONS = [
+    SendMessageTypingAction(),
+    SendMessageRecordAudioAction(),
+    SendMessageRecordRoundAction(),
+    SendMessageUploadPhotoAction(progress=1),
+    SendMessageUploadDocumentAction(progress=1)
+]
 
 # 1. AUTO-READ
 @client.on(events.NewMessage(incoming=True))
@@ -32,7 +45,7 @@ async def auto_read_handler(event):
         except Exception:
             pass
 
-# 2. DOIMIY ONLINE USHLAB TURISH (Har 20 soniyada)
+# 2. DOIMIY ONLINE LOOP (Telegram talabiga mos 40 soniyalik oraliq)
 async def keep_online_loop():
     while True:
         if CONFIG["online"]:
@@ -40,21 +53,19 @@ async def keep_online_loop():
                 await client(UpdateStatusRequest(offline=False))
             except Exception:
                 pass
-        await asyncio.sleep(20)
+        await asyncio.sleep(40)
 
-# 3. HAR BIR CHATDA TO'XTOVSIZ VA TEZKOR STATUS ANIMATSIYASI
+# 3. CHAT ACTION LOOP (To'xtovsiz harakatlar)
 async def run_chat_action(cid):
     idx = 0
     while True:
-        cur_act = ACTION_TYPES[idx % len(ACTION_TYPES)]
+        cur_act = ACTIONS[idx % len(ACTIONS)]
         try:
-            # Telegram animatsiyani o'chirib ulgurmasligi uchun to'g'ridan-to'g'ri action chaqiramiz
-            await client.action(cid, cur_act)
+            await client.send_chat_action(cid, cur_act)
         except Exception:
             pass
         idx += 1
-        # Har 1.8 soniyada yangi signal va yangi harakatga o'tadi (uzilish mutlaqo bo'lmaydi)
-        await asyncio.sleep(1.8)
+        await asyncio.sleep(2)
 
 # 4. BUYRUQLAR
 @client.on(events.NewMessage(outgoing=True))
@@ -97,16 +108,16 @@ async def commands_handler(event):
         await event.edit("<b>AUTO-READ:</b> <code>OCHIRILDI [OFF]</code>", parse_mode="html")
         return
 
-    # .typ (Uzluksiz va tezkor animatsiyani yoqish)
+    # .typ
     if text == ".typ":
         if cid not in active_tasks:
             active_tasks[cid] = asyncio.create_task(run_chat_action(cid))
-            await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>TEZKOR VA DOIMIY YOQILDI</code>\n<i>(Yozmoqda, audio, video, rasm, fayl...)</i>", parse_mode="html")
+            await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>YOQILDI</code>\n<i>(Yozmoqda, audio, video, rasm, fayl...)</i>", parse_mode="html")
         else:
             await event.edit("<b>STATUS ANIMATSIYASI:</b> <code>ALLAQACHON ISHLAYAPTI</code>", parse_mode="html")
         return
 
-    # .untyp (Animatsiyani to'xtatish)
+    # .untyp
     if text == ".untyp":
         if cid in active_tasks:
             task = active_tasks.pop(cid)
@@ -116,6 +127,7 @@ async def commands_handler(event):
             await event.edit("<b>STATUS ANIMATSIYASI:</b> <code>YOQILMAGAN</code>", parse_mode="html")
         return
 
+    # .info
     if text == ".info":
         uptime_sec = int(time.time() - START_TIME)
         hours = uptime_sec // 3600
@@ -141,7 +153,7 @@ async def commands_handler(event):
         await event.edit(table_text, parse_mode="html")
         return
 
-# 5. RENDER WEB SERVER
+# 5. RENDER WEB SERVER (Uptime monitor uchun port)
 async def start_web_server():
     app = web.Application()
     async def ping_handler(request):
