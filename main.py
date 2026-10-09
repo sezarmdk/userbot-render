@@ -19,9 +19,11 @@ CONFIG = {
     "read": True,
 }
 
-target_actions = set()
+# Har bir chat uchun alohida fon sikli (task) saqlash
+active_tasks = {}
 ACTION_TYPES = ["typing", "record-audio", "record-round", "photo", "document"]
 
+# 1. AUTO-READ
 @client.on(events.NewMessage(incoming=True))
 async def auto_read_handler(event):
     if CONFIG["read"] and event.is_private:
@@ -30,6 +32,7 @@ async def auto_read_handler(event):
         except Exception:
             pass
 
+# 2. DOIMIY ONLINE USHLAB TURISH (Har 20 soniyada)
 async def keep_online_loop():
     while True:
         if CONFIG["online"]:
@@ -37,22 +40,23 @@ async def keep_online_loop():
                 await client(UpdateStatusRequest(offline=False))
             except Exception:
                 pass
-        await asyncio.sleep(25)
+        await asyncio.sleep(20)
 
-async def action_loop():
+# 3. HAR BIR CHATDA TO'XTOVSIZ VA TEZKOR STATUS ANIMATSIYASI
+async def run_chat_action(cid):
     idx = 0
     while True:
-        if target_actions:
-            cur_act = ACTION_TYPES[idx % len(ACTION_TYPES)]
-            for cid in list(target_actions):
-                try:
-                    async with client.action(cid, cur_act):
-                        await asyncio.sleep(1)
-                except Exception:
-                    pass
-            idx += 1
-        await asyncio.sleep(3)
+        cur_act = ACTION_TYPES[idx % len(ACTION_TYPES)]
+        try:
+            # Telegram animatsiyani o'chirib ulgurmasligi uchun to'g'ridan-to'g'ri action chaqiramiz
+            await client.action(cid, cur_act)
+        except Exception:
+            pass
+        idx += 1
+        # Har 1.8 soniyada yangi signal va yangi harakatga o'tadi (uzilish mutlaqo bo'lmaydi)
+        await asyncio.sleep(1.8)
 
+# 4. BUYRUQLAR
 @client.on(events.NewMessage(outgoing=True))
 async def commands_handler(event):
     text = (event.raw_text or "").strip()
@@ -93,14 +97,23 @@ async def commands_handler(event):
         await event.edit("<b>AUTO-READ:</b> <code>OCHIRILDI [OFF]</code>", parse_mode="html")
         return
 
+    # .typ (Uzluksiz va tezkor animatsiyani yoqish)
     if text == ".typ":
-        target_actions.add(cid)
-        await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>YOQILDI</code>\n<i>(Yozmoqda, audio, video, rasm, fayl...)</i>", parse_mode="html")
+        if cid not in active_tasks:
+            active_tasks[cid] = asyncio.create_task(run_chat_action(cid))
+            await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>TEZKOR VA DOIMIY YOQILDI</code>\n<i>(Yozmoqda, audio, video, rasm, fayl...)</i>", parse_mode="html")
+        else:
+            await event.edit("<b>STATUS ANIMATSIYASI:</b> <code>ALLAQACHON ISHLAYAPTI</code>", parse_mode="html")
         return
 
+    # .untyp (Animatsiyani to'xtatish)
     if text == ".untyp":
-        target_actions.discard(cid)
-        await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>OCHIRILDI</code>", parse_mode="html")
+        if cid in active_tasks:
+            task = active_tasks.pop(cid)
+            task.cancel()
+            await event.edit("<b>CHAT STATUS ANIMATSIYASI:</b> <code>TOXTATILDI</code>", parse_mode="html")
+        else:
+            await event.edit("<b>STATUS ANIMATSIYASI:</b> <code>YOQILMAGAN</code>", parse_mode="html")
         return
 
     if text == ".info":
@@ -112,7 +125,7 @@ async def commands_handler(event):
 
         on_st = "YONIQ" if CONFIG["online"] else "OCHIQ"
         rd_st = "YONIQ" if CONFIG["read"] else "OCHIQ"
-        act_cnt = len(target_actions)
+        act_cnt = len(active_tasks)
 
         table_text = (
             "<b>┌─────────────────────────┐</b>\n"
@@ -128,6 +141,7 @@ async def commands_handler(event):
         await event.edit(table_text, parse_mode="html")
         return
 
+# 5. RENDER WEB SERVER
 async def start_web_server():
     app = web.Application()
     async def ping_handler(request):
@@ -144,7 +158,6 @@ async def main():
     print("Userbot online!")
     asyncio.create_task(start_web_server())
     asyncio.create_task(keep_online_loop())
-    asyncio.create_task(action_loop())
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
